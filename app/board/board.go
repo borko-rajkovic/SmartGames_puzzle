@@ -42,7 +42,7 @@ func (b Board) Print() {
 	for range colLength {
 		fmt.Print(" -")
 	}
-	println()
+	fmt.Println()
 }
 
 var FlatBoard = Board{

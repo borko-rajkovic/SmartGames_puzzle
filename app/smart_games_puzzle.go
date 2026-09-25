@@ -20,15 +20,19 @@ func Main() {
 	}
 
 	fmt.Printf("Solution found using %d pieces:\n", len(solution.Placements))
-	for _, placement := range solution.Placements {
+	fmt.Println("Initial board:")
+	board.FlatBoard.Print()
+	for index, placement := range solution.Placements {
 		fmt.Printf(
-			"%s at row %d, column %d (variation %d)\n",
+			"After placement %d/%d: %s at row %d, column %d (variation %d)\n",
+			index+1,
+			len(solution.Placements),
 			placement.Piece.Color,
 			placement.Row,
 			placement.Column,
 			placement.VariationIndex+1,
 		)
 		placement.Piece.Variations[placement.VariationIndex].Print()
+		solution.IntermediateBoards[index].Print()
 	}
-	solution.Board.Print()
 }

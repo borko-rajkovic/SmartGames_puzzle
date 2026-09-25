@@ -15,8 +15,9 @@ type Placement struct {
 }
 
 type Solution struct {
-	Board      Board
-	Placements []Placement
+	Board              Board
+	Placements         []Placement
+	IntermediateBoards []Board
 }
 
 type placementCell struct {
@@ -114,6 +115,7 @@ func FindSolution(initial Board, pieces []piece.Piece) (*Solution, error) {
 
 	usedPieces := make([]bool, len(pieces))
 	path := make([]Placement, 0, len(pieces))
+	intermediateBoards := make([]Board, 0, len(pieces))
 	var search func() bool
 	search = func() bool {
 		remainingNeeded := 0
@@ -163,11 +165,13 @@ func FindSolution(initial Board, pieces []piece.Piece) (*Solution, error) {
 				values[shapeCell.index] += shapeCell.contribution
 			}
 			path = append(path, candidate.placement)
+			intermediateBoards = append(intermediateBoards, boardFromValues(values, rows, columns))
 
 			if search() {
 				return true
 			}
 
+			intermediateBoards = intermediateBoards[:len(intermediateBoards)-1]
 			path = path[:len(path)-1]
 			for _, shapeCell := range candidate.cells {
 				values[shapeCell.index] -= shapeCell.contribution
@@ -181,14 +185,19 @@ func FindSolution(initial Board, pieces []piece.Piece) (*Solution, error) {
 		return nil, nil
 	}
 
-	solvedBoard := Board{cells: make([][]cell.CellType, rows)}
-	for row := range solvedBoard.cells {
-		solvedBoard.cells[row] = append([]cell.CellType(nil), values[row*columns:(row+1)*columns]...)
-	}
 	return &Solution{
-		Board:      solvedBoard,
-		Placements: append([]Placement(nil), path...),
+		Board:              boardFromValues(values, rows, columns),
+		Placements:         append([]Placement(nil), path...),
+		IntermediateBoards: append([]Board(nil), intermediateBoards...),
 	}, nil
+}
+
+func boardFromValues(values []cell.CellType, rows, columns int) Board {
+	result := Board{cells: make([][]cell.CellType, rows)}
+	for row := range result.cells {
+		result.cells[row] = append([]cell.CellType(nil), values[row*columns:(row+1)*columns]...)
+	}
+	return result
 }
 
 func boardDimensions(cells [][]cell.CellType) (int, int, error) {

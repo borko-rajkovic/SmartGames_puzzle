@@ -30,10 +30,21 @@ func TestFindSolutionFillsBoard(t *testing.T) {
 	if len(solution.Placements) != len(pieces) {
 		t.Fatalf("got %d placements; want %d", len(solution.Placements), len(pieces))
 	}
+	if len(solution.IntermediateBoards) != len(pieces) {
+		t.Fatalf("got %d intermediate boards; want %d", len(solution.IntermediateBoards), len(pieces))
+	}
 	for column, value := range solution.Board.cells[0] {
 		if value != cell.Complete {
 			t.Errorf("board cell (0, %d) = %d; want %d", column, value, cell.Complete)
 		}
+	}
+	if solution.IntermediateBoards[0].cells[0][0] != cell.Complete ||
+		solution.IntermediateBoards[0].cells[0][1] != cell.Empty {
+		t.Errorf("first intermediate board = %v; want first cell filled and second empty", solution.IntermediateBoards[0].cells)
+	}
+	if solution.IntermediateBoards[1].cells[0][0] != cell.Complete ||
+		solution.IntermediateBoards[1].cells[0][1] != cell.Complete {
+		t.Errorf("second intermediate board = %v; want both cells filled", solution.IntermediateBoards[1].cells)
 	}
 }
 
@@ -61,6 +72,9 @@ func TestFindSolutionSolvesConfiguredPuzzle(t *testing.T) {
 	}
 	if len(solution.Placements) != len(piece.Pieces) {
 		t.Fatalf("got %d placements; want %d", len(solution.Placements), len(piece.Pieces))
+	}
+	if len(solution.IntermediateBoards) != len(solution.Placements) {
+		t.Fatalf("got %d intermediate boards; want %d", len(solution.IntermediateBoards), len(solution.Placements))
 	}
 	for row, cells := range solution.Board.cells {
 		for column, value := range cells {
