@@ -48,81 +48,139 @@ var YellowPiece = createYellowPiece()
 var PinkPiece = createPinkPiece()
 
 func createDarkBluePiece() Piece {
-	return createPiece("Dark Blue", [][]cell.CellType{
+	piece, error := NewPiece("Dark Blue", [][]cell.CellType{
 		{cell.DownRight, cell.Complete, cell.Complete},
 		{cell.Empty, cell.Empty, cell.TopRight},
 		{cell.Empty, cell.Empty, cell.Empty},
 	})
+	if error != nil {
+		panic(error)
+	}
+	return piece
 }
 
 func createRedPiece() Piece {
-	return createPiece("Red", [][]cell.CellType{
+	piece, error := NewPiece("Red", [][]cell.CellType{
 		{cell.Complete, cell.Complete, cell.Empty},
 		{cell.TopLeft, cell.Empty, cell.Empty},
 		{cell.Empty, cell.Empty, cell.Empty},
 	})
+
+	if error != nil {
+		panic(error)
+	}
+
+	return piece
 }
 
 func createLightBluePiece() Piece {
-	return createPiece("Light Blue", [][]cell.CellType{
+	piece, error := NewPiece("Light Blue", [][]cell.CellType{
 		{cell.DownLeft, cell.Empty, cell.Empty},
 		{cell.Complete, cell.Empty, cell.Empty},
 		{cell.TopRight, cell.Empty, cell.Empty},
 	})
+
+	if error != nil {
+		panic(error)
+	}
+
+	return piece
 }
 
 func createPurplePiece() Piece {
-	return createPiece("Purple", [][]cell.CellType{
+	piece, error := NewPiece("Purple", [][]cell.CellType{
 		{cell.Empty, cell.DownRight, cell.Empty},
 		{cell.DownRight, cell.Complete, cell.Empty},
 		{cell.TopRight, cell.TopLeft, cell.Empty},
 	})
+
+	if error != nil {
+		panic(error)
+	}
+
+	return piece
 }
 
 func createDarkGreenPiece() Piece {
-	return createPiece("Dark Green", [][]cell.CellType{
+	piece, error := NewPiece("Dark Green", [][]cell.CellType{
 		{cell.Complete, cell.Empty, cell.Empty},
 		{cell.Complete, cell.Empty, cell.Empty},
 		{cell.TopRight, cell.Empty, cell.Empty},
 	})
+
+	if error != nil {
+		panic(error)
+	}
+
+	return piece
 }
 
 func createLightGreenPiece() Piece {
-	return createPiece("Light Green", [][]cell.CellType{
+	piece, error := NewPiece("Light Green", [][]cell.CellType{
 		{cell.DownRight, cell.Empty, cell.Empty},
 		{cell.Complete, cell.Empty, cell.Empty},
 		{cell.Complete, cell.Complete, cell.Empty},
 	})
+
+	if error != nil {
+		panic(error)
+	}
+
+	return piece
 }
 
 func createTurquoisePiece() Piece {
-	return createPiece("Turquoise", [][]cell.CellType{
+	piece, error := NewPiece("Turquoise", [][]cell.CellType{
 		{cell.Complete, cell.DownLeft, cell.Empty},
 		{cell.Complete, cell.TopLeft, cell.Empty},
 		{cell.TopLeft, cell.Empty, cell.Empty},
 	})
+
+	if error != nil {
+		panic(error)
+	}
+
+	return piece
 }
 
 func createOrangePiece() Piece {
-	return createPiece("Orange", [][]cell.CellType{
+	piece, error := NewPiece("Orange", [][]cell.CellType{
 		{cell.Empty, cell.DownRight, cell.Complete},
 		{cell.DownRight, cell.Complete, cell.TopLeft},
 		{cell.Empty, cell.Empty, cell.Empty},
 	})
+
+	if error != nil {
+		panic(error)
+	}
+
+	return piece
 }
 
 func createYellowPiece() Piece {
-	return createPiece("Yellow", [][]cell.CellType{
+	piece, error := NewPiece("Yellow", [][]cell.CellType{
 		{cell.Empty, cell.DownRight, cell.Empty},
 		{cell.Empty, cell.Complete, cell.Empty},
 		{cell.TopRight, cell.Complete, cell.Empty},
 	})
+
+	if error != nil {
+		panic(error)
+	}
+
+	return piece
 }
 
 func createPinkPiece() Piece {
-	return createPiece("Pink", [][]cell.CellType{
+	piece, error := NewPiece("Pink", [][]cell.CellType{
 		{cell.Complete, cell.Complete, cell.DownLeft},
 		{cell.Empty, cell.TopRight, cell.TopLeft},
 		{cell.Empty, cell.Empty, cell.Empty},
 	})
+
+	if error != nil {
+		panic(error)
+	}
+
+	return piece
 }

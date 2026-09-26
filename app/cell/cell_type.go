@@ -10,7 +10,7 @@ const (
 	TopLeft
 	Complete
 	Blocked
-	TriangleSlot
+	TriangleUpSlot
 	TriangleDownSlot
 	TriangleLeftSlot
 	TriangleRightSlot
