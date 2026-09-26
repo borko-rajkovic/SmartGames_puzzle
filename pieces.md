@@ -36,3 +36,6 @@ currently compatible placements to reduce the search.
 slots and four single-triangle slots; the solver fits one triangle contribution
 in each triangle slot and prints an intermediate heart after each placement.
 The displayed heart layout follows the sketch in `heart.txt`.
+
+When the application starts, choose `1` for the flat board or `2` for the
+heart-shaped board. Invalid input is rejected and prompted again.
