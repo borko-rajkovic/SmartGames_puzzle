@@ -38,14 +38,35 @@ func FindSolution(initial Board, pieces []piece.Piece) (*Solution, error) {
 	}
 
 	values := make([]cell.CellType, rows*columns)
-	neededTotal := 0
+	targets := make([]cell.CellType, rows*columns)
+	boardMinimum, boardMaximum := 0, 0
 	for row := range initial.cells {
 		for column, value := range initial.cells[row] {
-			if value < cell.Empty || value > cell.Complete {
+			if value < cell.Empty || value > cell.TriangleRightSlot {
 				return nil, fmt.Errorf("invalid board cell value %d at row %d, column %d", value, row, column)
 			}
-			values[row*columns+column] = value
-			neededTotal += int(cell.Complete - value)
+			index := row*columns + column
+			switch value {
+			case cell.Blocked:
+				values[index] = cell.Blocked
+				targets[index] = cell.Blocked
+			case cell.TriangleSlot:
+				targets[index] = cell.TriangleSlot
+			case cell.TriangleDownSlot, cell.TriangleLeftSlot, cell.TriangleRightSlot:
+				targets[index] = value
+			default:
+				values[index] = value
+				targets[index] = cell.Complete
+				boardMinimum += int(cell.Complete - value)
+				boardMaximum += int(cell.Complete - value)
+			}
+		}
+	}
+	for index, target := range targets {
+		if isTriangleTarget(target) && values[index] == cell.Empty {
+			minimum, maximum := triangleContributionRange(target)
+			boardMinimum += minimum
+			boardMaximum += maximum
 		}
 	}
 
@@ -104,12 +125,13 @@ func FindSolution(initial Board, pieces []piece.Piece) (*Solution, error) {
 		maximumPossibleTotal += maximumPieceTotal
 	}
 
-	if neededTotal < minimumPossibleTotal || neededTotal > maximumPossibleTotal {
+	if boardMinimum > maximumPossibleTotal || boardMaximum < minimumPossibleTotal {
 		return nil, fmt.Errorf(
-			"pieces can contribute between %d and %d, but the board requires %d",
+			"board requires between %d and %d, but pieces can contribute between %d and %d",
+			boardMinimum,
+			boardMaximum,
 			minimumPossibleTotal,
 			maximumPossibleTotal,
-			neededTotal,
 		)
 	}
 
@@ -118,9 +140,23 @@ func FindSolution(initial Board, pieces []piece.Piece) (*Solution, error) {
 	intermediateBoards := make([]Board, 0, len(pieces))
 	var search func() bool
 	search = func() bool {
-		remainingNeeded := 0
-		for _, value := range values {
-			remainingNeeded += int(cell.Complete - value)
+		remainingBoardMinimum, remainingBoardMaximum := 0, 0
+		for index, target := range targets {
+			switch target {
+			case cell.Complete:
+				remaining := int(cell.Complete - values[index])
+				remainingBoardMinimum += remaining
+				remainingBoardMaximum += remaining
+			default:
+				if !isTriangleTarget(target) {
+					continue
+				}
+				if values[index] == cell.Empty {
+					minimum, maximum := triangleContributionRange(target)
+					remainingBoardMinimum += minimum
+					remainingBoardMaximum += maximum
+				}
+			}
 		}
 		remainingMinimum, remainingMaximum := 0, 0
 		for pieceIndex, used := range usedPieces {
@@ -130,19 +166,19 @@ func FindSolution(initial Board, pieces []piece.Piece) (*Solution, error) {
 			remainingMinimum += minPieceTotals[pieceIndex]
 			remainingMaximum += maxPieceTotals[pieceIndex]
 		}
-		if remainingNeeded < remainingMinimum || remainingNeeded > remainingMaximum {
+		if remainingBoardMinimum > remainingMaximum || remainingBoardMaximum < remainingMinimum {
 			return false
 		}
 
 		targetIndex, options := -1, []candidatePlacement(nil)
 		for index, value := range values {
-			if value == cell.Complete {
+			if isFilled(value, targets[index]) {
 				continue
 			}
 
 			compatible := make([]candidatePlacement, 0)
 			for _, candidate := range candidatesByCell[index] {
-				if usedPieces[candidate.pieceIndex] || !canPlace(values, candidate) {
+				if usedPieces[candidate.pieceIndex] || !canPlace(values, targets, candidate) {
 					continue
 				}
 				compatible = append(compatible, candidate)
@@ -156,6 +192,11 @@ func FindSolution(initial Board, pieces []piece.Piece) (*Solution, error) {
 		}
 
 		if targetIndex == -1 {
+			for _, used := range usedPieces {
+				if !used {
+					return false
+				}
+			}
 			return true
 		}
 
@@ -165,7 +206,14 @@ func FindSolution(initial Board, pieces []piece.Piece) (*Solution, error) {
 				values[shapeCell.index] += shapeCell.contribution
 			}
 			path = append(path, candidate.placement)
-			intermediateBoards = append(intermediateBoards, boardFromValues(values, rows, columns))
+			intermediateBoards = append(intermediateBoards, boardFromValues(
+				values,
+				targets,
+				rows,
+				columns,
+				initial.displayRows,
+				initial.displayIndent,
+			))
 
 			if search() {
 				return true
@@ -186,16 +234,57 @@ func FindSolution(initial Board, pieces []piece.Piece) (*Solution, error) {
 	}
 
 	return &Solution{
-		Board:              boardFromValues(values, rows, columns),
+		Board: boardFromValues(
+			values,
+			targets,
+			rows,
+			columns,
+			initial.displayRows,
+			initial.displayIndent,
+		),
 		Placements:         append([]Placement(nil), path...),
 		IntermediateBoards: append([]Board(nil), intermediateBoards...),
 	}, nil
 }
 
-func boardFromValues(values []cell.CellType, rows, columns int) Board {
-	result := Board{cells: make([][]cell.CellType, rows)}
+func isFilled(value, target cell.CellType) bool {
+	if isTriangleTarget(target) {
+		return triangleFits(target, value)
+	}
+	return value == cell.Complete || target == cell.Blocked
+}
+
+func isTriangleTarget(target cell.CellType) bool {
+	return target >= cell.TriangleSlot && target <= cell.TriangleRightSlot
+}
+
+func triangleContributionRange(target cell.CellType) (int, int) {
+	return int(cell.DownRight), int(cell.TopLeft)
+}
+
+func triangleFits(target, contribution cell.CellType) bool {
+	return isTriangleTarget(target) && contribution >= cell.DownRight && contribution <= cell.TopLeft
+}
+
+func boardFromValues(
+	values, targets []cell.CellType,
+	rows, columns int,
+	displayRows [][]int,
+	displayIndent []int,
+) Board {
+	result := Board{
+		cells:         make([][]cell.CellType, rows),
+		targets:       make([][]cell.CellType, rows),
+		displayRows:   make([][]int, len(displayRows)),
+		displayIndent: append([]int(nil), displayIndent...),
+	}
 	for row := range result.cells {
-		result.cells[row] = append([]cell.CellType(nil), values[row*columns:(row+1)*columns]...)
+		start, end := row*columns, (row+1)*columns
+		result.cells[row] = append([]cell.CellType(nil), values[start:end]...)
+		result.targets[row] = append([]cell.CellType(nil), targets[start:end]...)
+	}
+	for row := range displayRows {
+		result.displayRows[row] = append([]int(nil), displayRows[row]...)
 	}
 	return result
 }
@@ -249,9 +338,22 @@ func variationDimensions(cells [][]cell.CellType) (int, int, []placementCell, er
 	return maxRow + 1, maxColumn + 1, shapeCells, nil
 }
 
-func canPlace(values []cell.CellType, candidate candidatePlacement) bool {
+func canPlace(values, targets []cell.CellType, candidate candidatePlacement) bool {
 	for _, shapeCell := range candidate.cells {
-		if values[shapeCell.index]+shapeCell.contribution > cell.Complete {
+		index := shapeCell.index
+		if targets[index] == cell.Blocked {
+			return false
+		}
+		if isTriangleTarget(targets[index]) {
+			if values[index] != cell.Empty || shapeCell.contribution == cell.Complete {
+				return false
+			}
+			if !triangleFits(targets[index], shapeCell.contribution) {
+				return false
+			}
+			continue
+		}
+		if values[index]+shapeCell.contribution > targets[index] {
 			return false
 		}
 	}

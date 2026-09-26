@@ -9,11 +9,16 @@ import (
 )
 
 func Main() {
-	solution, err := board.FindSolution(board.FlatBoard, piece.Pieces)
+	solveAndPrint("Heart-shaped board", board.HeartBoard)
+}
+
+func solveAndPrint(name string, initial board.Board) {
+	solution, err := board.FindSolution(initial, piece.Pieces)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	fmt.Printf("%s:\n", name)
 	if solution == nil {
 		fmt.Println("No solution found.")
 		return
@@ -21,7 +26,7 @@ func Main() {
 
 	fmt.Printf("Solution found using %d pieces:\n", len(solution.Placements))
 	fmt.Println("Initial board:")
-	board.FlatBoard.Print()
+	initial.Print()
 	for index, placement := range solution.Placements {
 		fmt.Printf(
 			"After placement %d/%d: %s at row %d, column %d (variation %d)\n",

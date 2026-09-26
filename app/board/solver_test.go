@@ -57,7 +57,7 @@ func TestFindSolutionReportsContributionMismatch(t *testing.T) {
 	initial := Board{cells: [][]cell.CellType{{cell.Empty, cell.Empty}}}
 
 	_, err = FindSolution(initial, pieces)
-	if err == nil || !strings.Contains(err.Error(), "pieces can contribute between 5 and 5, but the board requires 10") {
+	if err == nil || !strings.Contains(err.Error(), "board requires between 10 and 10, but pieces can contribute between 5 and 5") {
 		t.Fatalf("got error %v; want contribution mismatch", err)
 	}
 }
@@ -80,6 +80,73 @@ func TestFindSolutionSolvesConfiguredPuzzle(t *testing.T) {
 		for column, value := range cells {
 			if value != cell.Complete {
 				t.Errorf("board cell (%d, %d) = %d; want %d", row, column, value, cell.Complete)
+			}
+		}
+	}
+}
+
+func TestFindSolutionSolvesHeartBoard(t *testing.T) {
+	squareSlots, triangleSlots := 0, 0
+	for _, row := range HeartBoard.cells {
+		for _, value := range row {
+			switch {
+			case value == cell.Empty:
+				squareSlots++
+			case isTriangleTarget(value):
+				triangleSlots++
+			}
+		}
+	}
+	if squareSlots != 28 || triangleSlots != 4 {
+		t.Fatalf("heart board has %d square slots and %d triangle slots; want 28 and 4", squareSlots, triangleSlots)
+	}
+	displayedSlots := make(map[int]bool, squareSlots+triangleSlots)
+	for _, row := range HeartBoard.displayRows {
+		for _, index := range row {
+			if displayedSlots[index] {
+				t.Fatalf("heart display repeats board cell %d", index)
+			}
+			displayedSlots[index] = true
+		}
+	}
+	for row, cells := range HeartBoard.cells {
+		for column, value := range cells {
+			index := row*len(cells) + column
+			if (value == cell.Blocked) == displayedSlots[index] {
+				t.Errorf("heart display membership does not match board cell (%d, %d)", row, column)
+			}
+		}
+	}
+
+	solution, err := FindSolution(HeartBoard, piece.Pieces)
+	if err != nil {
+		t.Fatalf("FindSolution returned an error: %v", err)
+	}
+	if solution == nil {
+		t.Fatal("FindSolution did not solve the heart board")
+	}
+	if len(solution.Placements) != len(piece.Pieces) {
+		t.Fatalf("got %d placements; want %d", len(solution.Placements), len(piece.Pieces))
+	}
+	if len(solution.IntermediateBoards) != len(solution.Placements) {
+		t.Fatalf("got %d intermediate boards; want %d", len(solution.IntermediateBoards), len(solution.Placements))
+	}
+	for row, cells := range solution.Board.cells {
+		for column, value := range cells {
+			if HeartBoard.cells[row][column] == cell.Blocked {
+				if value != cell.Blocked {
+					t.Errorf("blocked board cell (%d, %d) = %d; want Blocked", row, column, value)
+				}
+				continue
+			}
+			if isTriangleTarget(HeartBoard.cells[row][column]) {
+				if value < cell.DownRight || value > cell.TopLeft {
+					t.Errorf("triangle board cell (%d, %d) = %d; want a triangle contribution", row, column, value)
+				}
+				continue
+			}
+			if value != cell.Complete {
+				t.Errorf("playable board cell (%d, %d) = %d; want %d", row, column, value, cell.Complete)
 			}
 		}
 	}

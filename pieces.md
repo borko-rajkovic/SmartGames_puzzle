@@ -27,7 +27,12 @@ That will help us later on in checking if piece can fill their cell on the board
 
 ## Solver
 
-`board.FindSolution(board.FlatBoard, piece.Pieces)` searches piece placements and
-their rotations/reflections, returning the first arrangement that makes every
-board cell equal `Complete`. It uses backtracking and chooses the unfinished
-cell with the fewest currently compatible placements to reduce the search.
+`board.FindSolution(board.FlatBoard, piece.Pieces)` searches piece placements
+and their rotations/reflections, returning the first arrangement that completes
+the board. It uses backtracking and chooses the unfinished cell with the fewest
+currently compatible placements to reduce the search.
+
+`board.HeartBoard` represents the 45-degree heart layout. It has 28 full-square
+slots and four single-triangle slots; the solver fits one triangle contribution
+in each triangle slot and prints an intermediate heart after each placement.
+The displayed heart layout follows the sketch in `heart.txt`.

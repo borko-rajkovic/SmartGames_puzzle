@@ -9,4 +9,9 @@ const (
 	DownLeft
 	TopLeft
 	Complete
+	Blocked
+	TriangleSlot
+	TriangleDownSlot
+	TriangleLeftSlot
+	TriangleRightSlot
 )
