@@ -13,6 +13,51 @@ type Board struct {
 	displayIndent []int
 }
 
+// Rows returns the number of rows in the board.
+func (b Board) Rows() int {
+	return len(b.cells)
+}
+
+// Columns returns the number of columns in the board.
+func (b Board) Columns() int {
+	if len(b.cells) == 0 {
+		return 0
+	}
+	return len(b.cells[0])
+}
+
+// CellAt returns the current fill value of the cell at (row, column):
+// Empty, a triangle half, Complete, or Blocked/a triangle slot for a
+// predefined board that hasn't been solved yet.
+func (b Board) CellAt(row, column int) cell.CellType {
+	return b.cells[row][column]
+}
+
+// TargetAt returns what the cell at (row, column) must become. For a
+// solved or in-progress board (produced by FindSolution/FindSolutions)
+// this comes from the solver's target grid. For a predefined, unsolved
+// board (no target grid yet), the cell's own value already encodes any
+// Blocked/triangle-slot requirement, so that is returned instead.
+func (b Board) TargetAt(row, column int) cell.CellType {
+	if len(b.targets) == 0 {
+		return b.cells[row][column]
+	}
+	return b.targets[row][column]
+}
+
+// DisplayRows returns the board's angled display layout (used by
+// heart/diamond-shaped boards), or nil if the board uses the plain
+// rectangular layout.
+func (b Board) DisplayRows() [][]int {
+	return b.displayRows
+}
+
+// DisplayIndent returns the per-row leading indent for the angled
+// display layout returned by DisplayRows.
+func (b Board) DisplayIndent() []int {
+	return b.displayIndent
+}
+
 func (b Board) Print() {
 	if len(b.displayRows) > 0 {
 		b.printAngled()

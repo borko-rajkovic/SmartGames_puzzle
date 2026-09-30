@@ -1,11 +1,40 @@
 package board
 
 import (
+	"context"
 	"fmt"
+	"math/rand"
+	"time"
 
 	"github.com/borko-rajkovic/smart_games_puzzle/app/cell"
 	"github.com/borko-rajkovic/smart_games_puzzle/app/piece"
 )
+
+// Mode selects how FindSolutions explores the search space.
+type Mode int
+
+const (
+	// ModeFirst stops as soon as a single solution is found.
+	ModeFirst Mode = iota
+	// ModeRandom shuffles candidate order at each branch so different
+	// runs tend to discover different valid solutions.
+	ModeRandom
+	// ModeAll keeps searching after a solution is found, collecting every
+	// solution it discovers (up to Options.Limit, if set).
+	ModeAll
+)
+
+// Options configures a FindSolutions search.
+type Options struct {
+	// Mode selects the search strategy. Zero value is ModeFirst.
+	Mode Mode
+	// Limit caps the number of solutions collected. 0 means unlimited
+	// (ModeFirst always stops after the first solution regardless).
+	Limit int
+	// Rand supplies randomness for ModeRandom. If nil, a time-seeded
+	// source is used.
+	Rand *rand.Rand
+}
 
 type Placement struct {
 	Piece          piece.Piece
@@ -31,7 +60,32 @@ type candidatePlacement struct {
 	cells      []placementCell
 }
 
+// FindSolution returns the first solution found for the given board and
+// piece set, or (nil, nil) if none exists.
 func FindSolution(initial Board, pieces []piece.Piece) (*Solution, error) {
+	solutions, err := FindSolutions(context.Background(), initial, pieces, Options{Mode: ModeFirst})
+	if err != nil {
+		return nil, err
+	}
+	if len(solutions) == 0 {
+		return nil, nil
+	}
+	return solutions[0], nil
+}
+
+// FindSolutions searches for solutions to the given board using the given
+// piece set, according to opts.Mode:
+//
+//   - ModeFirst stops at the first solution found (Options.Limit is ignored).
+//   - ModeRandom shuffles candidate order at each branch, so repeated calls
+//     tend to surface different valid solutions; it stops at the first
+//     solution found unless Options.Limit > 1.
+//   - ModeAll keeps searching for every solution, up to Options.Limit
+//     (0 = unlimited).
+//
+// The search can be cancelled early via ctx; solutions collected before
+// cancellation are still returned.
+func FindSolutions(ctx context.Context, initial Board, pieces []piece.Piece, opts Options) ([]*Solution, error) {
 	rows, columns, err := boardDimensions(initial.cells)
 	if err != nil {
 		return nil, fmt.Errorf("invalid board: %w", err)
@@ -135,11 +189,21 @@ func FindSolution(initial Board, pieces []piece.Piece) (*Solution, error) {
 		)
 	}
 
+	rng := opts.Rand
+	if opts.Mode == ModeRandom && rng == nil {
+		rng = rand.New(rand.NewSource(time.Now().UnixNano()))
+	}
+
 	usedPieces := make([]bool, len(pieces))
 	path := make([]Placement, 0, len(pieces))
 	intermediateBoards := make([]Board, 0, len(pieces))
+	results := make([]*Solution, 0)
 	var search func() bool
 	search = func() bool {
+		if err := ctx.Err(); err != nil {
+			return true
+		}
+
 		remainingBoardMinimum, remainingBoardMaximum := 0, 0
 		for index, target := range targets {
 			switch target {
@@ -197,7 +261,35 @@ func FindSolution(initial Board, pieces []piece.Piece) (*Solution, error) {
 					return false
 				}
 			}
-			return true
+			results = append(results, &Solution{
+				Board: boardFromValues(
+					values,
+					targets,
+					rows,
+					columns,
+					initial.displayRows,
+					initial.displayIndent,
+				),
+				Placements:         append([]Placement(nil), path...),
+				IntermediateBoards: append([]Board(nil), intermediateBoards...),
+			})
+			if opts.Mode == ModeFirst {
+				return true
+			}
+			limit := opts.Limit
+			if opts.Mode == ModeRandom && limit == 0 {
+				limit = 1
+			}
+			if limit > 0 && len(results) >= limit {
+				return true
+			}
+			return false
+		}
+
+		if opts.Mode == ModeRandom {
+			rng.Shuffle(len(options), func(i, j int) {
+				options[i], options[j] = options[j], options[i]
+			})
 		}
 
 		for _, candidate := range options {
@@ -229,22 +321,16 @@ func FindSolution(initial Board, pieces []piece.Piece) (*Solution, error) {
 		return false
 	}
 
-	if !search() {
+	search()
+
+	if len(results) == 0 {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		return nil, nil
 	}
 
-	return &Solution{
-		Board: boardFromValues(
-			values,
-			targets,
-			rows,
-			columns,
-			initial.displayRows,
-			initial.displayIndent,
-		),
-		Placements:         append([]Placement(nil), path...),
-		IntermediateBoards: append([]Board(nil), intermediateBoards...),
-	}, nil
+	return results, nil
 }
 
 func isFilled(value, target cell.CellType) bool {
