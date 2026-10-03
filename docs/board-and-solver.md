@@ -60,7 +60,7 @@ type Board struct {
 ```
 
 - `cells` — the current fill state of the board, per row/column, using the "value" meaning of `CellType` above (`Empty`, `DownRight`, …, `Complete`, `Blocked`).
-- `targets` — populated only on *solved/intermediate* boards produced by the solver (`boardFromValues`); tells the printer what a still-`Empty` cell is ultimately supposed to become (e.g. draw a faint △ for a `TriangleUpSlot` even though nothing has been placed there yet). Predefined boards like `FlatBoard`/`HeartBoard` don't set this — it's derived by the solver from the initial `cells`.
+- `targets` — populated only on *solved/intermediate* boards produced by the solver (`boardFromValues`); tells the printer what a still-`Empty` cell is ultimately supposed to become (e.g. draw a faint ▽ for a `TriangleUpSlot` even though nothing has been placed there yet). Predefined boards like `FlatBoard`/`HeartBoard` don't set this — it's derived by the solver from the initial `cells`.
 - `displayRows` / `displayIndent` — optional, used only by `HeartBoard`. The heart shape isn't a rectangle, so it can't be printed row-by-row from the underlying rectangular grid without gaps looking wrong. Instead, `displayRows` lists, for each *visual* row, which flat cell indices (`row*columns+column`) appear in that row, in left-to-right order, and `displayIndent` says how many leading spaces to print before that row so the diamond/heart shape lines up correctly. `Print()` uses `printAngled()` when `displayRows` is non-empty (`board.go:16-20`), otherwise it falls back to the plain rectangular renderer.
 
 ### Predefined boards (`board.go:124-155`)

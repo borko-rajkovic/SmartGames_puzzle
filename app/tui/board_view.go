@@ -43,23 +43,23 @@ func glyphFor(value cell.CellType) string {
 	case cell.DownRight:
 		return "◢"
 	case cell.TopRight:
-		return "◣"
-	case cell.DownLeft:
-		return "◤"
-	case cell.TopLeft:
 		return "◥"
+	case cell.DownLeft:
+		return "◣"
+	case cell.TopLeft:
+		return "◤"
 	case cell.Complete:
 		return "■"
 	case cell.Blocked:
 		return "×"
 	case cell.TriangleUpSlot:
-		return "△"
-	case cell.TriangleDownSlot:
 		return "▽"
+	case cell.TriangleDownSlot:
+		return "△"
 	case cell.TriangleLeftSlot:
-		return "◁"
-	case cell.TriangleRightSlot:
 		return "▷"
+	case cell.TriangleRightSlot:
+		return "◁"
 	}
 	return " "
 }

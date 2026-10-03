@@ -88,24 +88,24 @@ func (b Board) Print() {
 			case cell.Blocked:
 				cellString = "×"
 			case cell.TriangleUpSlot:
-				cellString = "△"
-			case cell.TriangleDownSlot:
 				cellString = "▽"
+			case cell.TriangleDownSlot:
+				cellString = "△"
 			case cell.TriangleLeftSlot:
-				cellString = "◁"
-			case cell.TriangleRightSlot:
 				cellString = "▷"
+			case cell.TriangleRightSlot:
+				cellString = "◁"
 			}
 			if boardCell == cell.Empty && len(b.targets) > 0 {
 				switch b.targets[rowIndex][column] {
 				case cell.TriangleUpSlot:
-					cellString = "△"
-				case cell.TriangleDownSlot:
 					cellString = "▽"
+				case cell.TriangleDownSlot:
+					cellString = "△"
 				case cell.TriangleLeftSlot:
-					cellString = "◁"
-				case cell.TriangleRightSlot:
 					cellString = "▷"
+				case cell.TriangleRightSlot:
+					cellString = "◁"
 				}
 			}
 			fmt.Print(cellString)
@@ -136,28 +136,28 @@ func (b Board) printAngled() {
 			switch value {
 			case cell.Empty:
 				if target == cell.TriangleDownSlot {
-					fmt.Print("▽")
+					fmt.Print("△")
 				} else if target == cell.TriangleLeftSlot {
-					fmt.Print("◁")
-				} else if target == cell.TriangleRightSlot {
 					fmt.Print("▷")
+				} else if target == cell.TriangleRightSlot {
+					fmt.Print("◁")
 				} else {
 					fmt.Print("□")
 				}
 			case cell.TriangleDownSlot:
-				fmt.Print("▽")
+				fmt.Print("△")
 			case cell.TriangleLeftSlot:
-				fmt.Print("◁")
-			case cell.TriangleRightSlot:
 				fmt.Print("▷")
+			case cell.TriangleRightSlot:
+				fmt.Print("◁")
 			case cell.DownRight:
 				fmt.Print("◢")
 			case cell.TopRight:
-				fmt.Print("◣")
-			case cell.DownLeft:
-				fmt.Print("◤")
-			case cell.TopLeft:
 				fmt.Print("◥")
+			case cell.DownLeft:
+				fmt.Print("◣")
+			case cell.TopLeft:
+				fmt.Print("◤")
 			case cell.Complete:
 				fmt.Print("■")
 			}
