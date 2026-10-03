@@ -104,9 +104,7 @@ func FindSolutions(ctx context.Context, initial Board, pieces []piece.Piece, opt
 			case cell.Blocked:
 				values[index] = cell.Blocked
 				targets[index] = cell.Blocked
-			case cell.TriangleUpSlot:
-				targets[index] = cell.TriangleUpSlot
-			case cell.TriangleDownSlot, cell.TriangleLeftSlot, cell.TriangleRightSlot:
+			case cell.TriangleUpSlot, cell.TriangleDownSlot, cell.TriangleLeftSlot, cell.TriangleRightSlot:
 				targets[index] = value
 			default:
 				values[index] = value
@@ -118,7 +116,7 @@ func FindSolutions(ctx context.Context, initial Board, pieces []piece.Piece, opt
 	}
 	for index, target := range targets {
 		if isTriangleTarget(target) && values[index] == cell.Empty {
-			minimum, maximum := triangleContributionRange(target)
+			minimum, maximum := triangleContributionRange()
 			boardMinimum += minimum
 			boardMaximum += maximum
 		}
@@ -216,7 +214,7 @@ func FindSolutions(ctx context.Context, initial Board, pieces []piece.Piece, opt
 					continue
 				}
 				if values[index] == cell.Empty {
-					minimum, maximum := triangleContributionRange(target)
+					minimum, maximum := triangleContributionRange()
 					remainingBoardMinimum += minimum
 					remainingBoardMaximum += maximum
 				}
@@ -344,7 +342,7 @@ func isTriangleTarget(target cell.CellType) bool {
 	return target >= cell.TriangleUpSlot && target <= cell.TriangleRightSlot
 }
 
-func triangleContributionRange(target cell.CellType) (int, int) {
+func triangleContributionRange() (int, int) {
 	return int(cell.DownRight), int(cell.TopLeft)
 }
 
