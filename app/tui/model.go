@@ -24,6 +24,7 @@ const (
 	screenModeSelect
 	screenSolving
 	screenSolutionList
+	screenReplayMode // choose full search trace vs clean solution animation
 	screenAnimate
 )
 
@@ -44,6 +45,7 @@ type Model struct {
 	boardList    list.Model
 	modeList     list.Model
 	solutionList list.Model
+	replayList   list.Model
 	spinner      spinner.Model
 
 	width, height int
@@ -59,8 +61,13 @@ type Model struct {
 	solutions        []*board.Solution
 	selectedSolution *board.Solution
 
-	// stepIndex is the current position in the search-step trace.
-	// 0 = initial board; 1..len(SearchSteps) = after that many search operations.
+	// replaySearch controls which animation path is used.
+	// true  → animate every SearchStep including backtracks
+	// false → animate only the final piece placements (IntermediateBoards)
+	replaySearch bool
+
+	// stepIndex is the current position in the active animation sequence.
+	// 0 = initial board; k = after the k-th operation in the sequence.
 	stepIndex int
 	playing   bool
 	speed     time.Duration
@@ -82,6 +89,16 @@ func NewModel() Model {
 			desc:  fmt.Sprintf("Enumerate up to %d solutions (may take a while; esc cancels early)", allSolutionsLimit),
 		},
 	}
+	replayItems := []list.Item{
+		menuItem{
+			title: "Full search trace",
+			desc:  "Replay every placement attempt and backtrack — see exactly how the solver thinks",
+		},
+		menuItem{
+			title: "Solution only",
+			desc:  "Animate the final piece placements without the failed attempts",
+		},
+	}
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -92,6 +109,7 @@ func NewModel() Model {
 		boardList:    newMenuList("Choose a board to solve", boardItems),
 		modeList:     newMenuList("Choose a solve mode", modeItems),
 		solutionList: newMenuList("Choose a solution to watch", nil),
+		replayList:   newMenuList("Choose an animation style", replayItems),
 		spinner:      sp,
 		speed:        defaultSpeed,
 	}
@@ -120,6 +138,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.boardList.SetSize(msg.Width, listHeight)
 		m.modeList.SetSize(msg.Width, listHeight)
 		m.solutionList.SetSize(msg.Width, listHeight)
+		m.replayList.SetSize(msg.Width, listHeight)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -139,6 +158,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateSolving(msg)
 		case screenSolutionList:
 			return m.updateSolutionList(msg)
+		case screenReplayMode:
+			return m.updateReplayMode(msg)
 		case screenAnimate:
 			return m.updateAnimate(msg)
 		}
@@ -236,7 +257,8 @@ func (m Model) updateSolutionList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.selectedSolution = m.solutions[index]
-		return m.startAnimation()
+		m.screen = screenReplayMode
+		return m, nil
 	case "esc":
 		m.screen = screenModeSelect
 		return m, nil
@@ -249,19 +271,51 @@ func (m Model) updateSolutionList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m Model) updateReplayMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		item, ok := m.replayList.SelectedItem().(menuItem)
+		if !ok {
+			return m, nil
+		}
+		m.replaySearch = item.title == "Full search trace"
+		return m.startAnimation()
+	case "esc":
+		if len(m.solutions) > 1 {
+			m.screen = screenSolutionList
+		} else {
+			m.screen = screenModeSelect
+		}
+		return m, nil
+	case "q":
+		m.quitting = true
+		return m, tea.Quit
+	}
+	var cmd tea.Cmd
+	m.replayList, cmd = m.replayList.Update(msg)
+	return m, cmd
+}
+
+// animTotal returns the length of the active animation sequence.
+func (m Model) animTotal() int {
+	if m.selectedSolution == nil {
+		return 0
+	}
+	if m.replaySearch {
+		return len(m.selectedSolution.SearchSteps)
+	}
+	return len(m.selectedSolution.Placements)
+}
+
 func (m Model) updateAnimate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	total := len(m.selectedSolution.SearchSteps)
+	total := m.animTotal()
 	switch msg.String() {
 	case "q":
 		m.quitting = true
 		return m, tea.Quit
 	case "esc":
 		m.playing = false
-		if len(m.solutions) > 1 {
-			m.screen = screenSolutionList
-		} else {
-			m.screen = screenModeSelect
-		}
+		m.screen = screenReplayMode
 		return m, nil
 	case " ":
 		m.playing = !m.playing
@@ -311,7 +365,8 @@ func (m Model) handleSolveResult(msg solveResultMsg) (tea.Model, tea.Cmd) {
 
 	if len(msg.solutions) == 1 {
 		m.selectedSolution = msg.solutions[0]
-		return m.startAnimation()
+		m.screen = screenReplayMode
+		return m, nil
 	}
 
 	items := make([]list.Item, len(msg.solutions))
@@ -338,7 +393,7 @@ func (m Model) handleAnimTick() (tea.Model, tea.Cmd) {
 	if !m.playing || m.selectedSolution == nil {
 		return m, nil
 	}
-	total := len(m.selectedSolution.SearchSteps)
+	total := m.animTotal()
 	if m.stepIndex >= total {
 		m.playing = false
 		return m, nil
@@ -352,39 +407,51 @@ func (m Model) handleAnimTick() (tea.Model, tea.Cmd) {
 }
 
 // currentBoard returns the board state to display at the current animation step.
-// Step 0 shows the initial (empty) board; step k shows the state after the
-// k-th search operation (place or backtrack).
 func (m Model) currentBoard() board.Board {
 	if m.selectedSolution == nil || m.stepIndex == 0 {
 		return m.initialBoard
 	}
-	steps := m.selectedSolution.SearchSteps
-	idx := m.stepIndex - 1
-	if idx >= len(steps) {
-		idx = len(steps) - 1
+	if m.replaySearch {
+		steps := m.selectedSolution.SearchSteps
+		idx := m.stepIndex - 1
+		if idx >= len(steps) {
+			idx = len(steps) - 1
+		}
+		return steps[idx].Board
 	}
-	return steps[idx].Board
+	boards := m.selectedSolution.IntermediateBoards
+	idx := m.stepIndex - 1
+	if idx >= len(boards) {
+		return m.selectedSolution.Board
+	}
+	return boards[idx]
 }
 
-// placementsUpTo returns the placements that are active at the current step,
-// so the board renderer can colour cells by piece.
-func (m Model) placementsUpTo() []board.Placement {
+// activePlacements returns the set of pieces on the board at the current step,
+// used to colour cells by piece in the renderer.
+func (m Model) activePlacements() []board.Placement {
 	if m.selectedSolution == nil || m.stepIndex == 0 {
 		return nil
 	}
-	steps := m.selectedSolution.SearchSteps
-	idx := m.stepIndex - 1
-	if idx >= len(steps) {
-		idx = len(steps) - 1
+	if !m.replaySearch {
+		end := m.stepIndex
+		if end > len(m.selectedSolution.Placements) {
+			end = len(m.selectedSolution.Placements)
+		}
+		return m.selectedSolution.Placements[:end]
 	}
-	// Replay forward from step 0 to collect the active placement set.
+	// Search mode: replay place/backtrack events to derive the active set.
+	steps := m.selectedSolution.SearchSteps
+	end := m.stepIndex - 1
+	if end >= len(steps) {
+		end = len(steps) - 1
+	}
 	active := make([]board.Placement, 0, len(m.selectedSolution.Placements))
-	for i := 0; i <= idx; i++ {
+	for i := 0; i <= end; i++ {
 		s := steps[i]
 		if s.Kind == board.StepPlace {
 			active = append(active, s.Placement)
 		} else {
-			// Remove the last placement of this piece.
 			for j := len(active) - 1; j >= 0; j-- {
 				if active[j].Piece.Color == s.Placement.Piece.Color {
 					active = append(active[:j], active[j+1:]...)
@@ -414,6 +481,8 @@ func (m Model) View() string {
 		return appStyle.Render(m.renderSolving())
 	case screenSolutionList:
 		return appStyle.Render(m.solutionList.View())
+	case screenReplayMode:
+		return appStyle.Render(m.replayList.View())
 	case screenAnimate:
 		return appStyle.Render(m.renderAnimate())
 	}
@@ -434,52 +503,68 @@ func (m Model) renderSolving() string {
 
 func (m Model) renderAnimate() string {
 	solution := m.selectedSolution
-	steps := solution.SearchSteps
-	total := len(steps)
+	total := m.animTotal()
 
 	header := titleStyle.Render(fmt.Sprintf("%s — %s", m.boardName, m.solveMode))
-
-	// Step counter and current action label.
-	var stepLabel, actionLine string
-	if m.stepIndex == 0 {
-		stepLabel = "Ready"
-		actionLine = helpStyle.Render("Press space to start the search replay")
-	} else {
-		s := steps[m.stepIndex-1]
-		if s.Kind == board.StepPlace {
-			stepLabel = placeStyle.Render("▶ Place")
-			actionLine = fmt.Sprintf("Placing %s at row %d, col %d (variation %d)",
-				s.Placement.Piece.Color, s.Placement.Row, s.Placement.Column,
-				s.Placement.VariationIndex+1)
-		} else {
-			stepLabel = backtrackStyle.Render("◀ Backtrack")
-			actionLine = fmt.Sprintf("Removing %s — branch failed", s.Placement.Piece.Color)
-		}
-		if m.stepIndex >= total {
-			stepLabel = placeStyle.Render("✓ Solved")
-			actionLine = fmt.Sprintf("Solution found in %s search steps", stepCountStyle.Render(fmt.Sprintf("%d", total)))
-		}
-	}
 
 	playState := "Paused"
 	if m.playing {
 		playState = "Playing"
 	}
 
-	progress := progressStyle.Render(fmt.Sprintf(
-		"Search step %d / %d   %s   %s",
-		m.stepIndex, total, stepLabel, playState,
-	))
+	var modeTag, progress, actionLine string
+	if m.replaySearch {
+		modeTag = helpStyle.Render("[Full search trace]")
+		var stepLabel string
+		if m.stepIndex == 0 {
+			stepLabel = "Ready"
+			actionLine = helpStyle.Render("Press space to start the search replay")
+		} else {
+			s := solution.SearchSteps[m.stepIndex-1]
+			if s.Kind == board.StepPlace {
+				stepLabel = placeStyle.Render("▶ Place")
+				actionLine = fmt.Sprintf("Placing %s at row %d, col %d (variation %d)",
+					s.Placement.Piece.Color, s.Placement.Row, s.Placement.Column,
+					s.Placement.VariationIndex+1)
+			} else {
+				stepLabel = backtrackStyle.Render("◀ Backtrack")
+				actionLine = fmt.Sprintf("Removing %s — branch failed", s.Placement.Piece.Color)
+			}
+			if m.stepIndex >= total {
+				stepLabel = placeStyle.Render("✓ Solved")
+				actionLine = fmt.Sprintf("Solution found in %s search steps",
+					stepCountStyle.Render(fmt.Sprintf("%d", total)))
+			}
+		}
+		progress = progressStyle.Render(fmt.Sprintf(
+			"Search step %d / %d   %s   %s", m.stepIndex, total, stepLabel, playState,
+		))
+	} else {
+		modeTag = helpStyle.Render("[Solution only]")
+		status := "Placing pieces..."
+		if m.stepIndex >= total {
+			status = "Solved!"
+		}
+		progress = progressStyle.Render(fmt.Sprintf(
+			"Placement %d / %d — %s   %s", m.stepIndex, total, status, playState,
+		))
+		if m.stepIndex > 0 && m.stepIndex <= total {
+			p := solution.Placements[m.stepIndex-1]
+			actionLine = fmt.Sprintf("Last placed: %s at row %d, col %d (variation %d)",
+				p.Piece.Color, p.Row, p.Column, p.VariationIndex+1)
+		}
+	}
 
-	placements := m.placementsUpTo()
+	placements := m.activePlacements()
 	boardStr := RenderBoard(m.currentBoard(), placements, len(placements))
 
 	help := helpStyle.Render(
 		"space: play/pause   ←/→: step   r: restart   +/-: speed   esc: back   q: quit",
 	)
 
-	sections := []string{
+	return strings.Join([]string{
 		header,
+		modeTag,
 		progress,
 		"",
 		boardStr,
@@ -489,6 +574,5 @@ func (m Model) renderAnimate() string {
 		Legend(piece.Pieces),
 		"",
 		help,
-	}
-	return strings.Join(sections, "\n")
+	}, "\n")
 }

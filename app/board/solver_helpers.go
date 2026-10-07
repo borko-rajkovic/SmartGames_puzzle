@@ -183,31 +183,38 @@ func findMostConstrained(
 	candidatesByCell [][]candidatePlacement,
 	usedPieces []bool,
 ) (int, []candidatePlacement) {
-	best, bestOptions := -1, []candidatePlacement(nil)
+	bestIndex, bestCount := -1, 0
 
+	// Pass 1: find the unfilled cell with the fewest compatible candidates.
+	// Only count — no slice allocation for non-winning cells.
 	for index, value := range values {
 		if isFilled(value, targets[index]) {
 			continue
 		}
-		// Collect candidates that are geometrically valid and whose piece
-		// hasn't been placed yet.
-		compatible := make([]candidatePlacement, 0)
+		count := 0
 		for _, candidate := range candidatesByCell[index] {
-			if usedPieces[candidate.pieceIndex] || !canPlace(values, targets, candidate) {
-				continue
+			if !usedPieces[candidate.pieceIndex] && canPlace(values, targets, candidate) {
+				count++
 			}
-			compatible = append(compatible, candidate)
 		}
-		if len(compatible) == 0 {
-			// This cell cannot be filled — dead end.
-			return index, nil
+		if count == 0 {
+			return index, nil // dead end
 		}
-		if best == -1 || len(compatible) < len(bestOptions) {
-			best, bestOptions = index, compatible
+		if bestIndex == -1 || count < bestCount {
+			bestIndex, bestCount = index, count
 		}
 	}
-	// best == -1 means every cell was filled.
-	return best, bestOptions
+	if bestIndex == -1 {
+		return -1, nil // all cells filled
+	}
+	// Pass 2: collect candidates for the winning cell only.
+	best := make([]candidatePlacement, 0, bestCount)
+	for _, candidate := range candidatesByCell[bestIndex] {
+		if !usedPieces[candidate.pieceIndex] && canPlace(values, targets, candidate) {
+			best = append(best, candidate)
+		}
+	}
+	return bestIndex, best
 }
 
 // applyPlacement marks the piece as used and adds its per-cell contributions.

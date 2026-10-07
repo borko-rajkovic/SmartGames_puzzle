@@ -163,6 +163,11 @@ func FindSolutions(ctx context.Context, initial Board, pieces []piece.Piece, opt
 	searchSteps := make([]SearchStep, 0)
 	results := make([]*Solution, 0)
 
+	// Incremental feasibility totals — maintained around every place/undo so
+	// the pruning check is O(1) instead of rescanning all cells and pieces.
+	boardRemMin, boardRemMax := boardMin, boardMax
+	pieceRemMin, pieceRemMax := minPossible, maxPossible
+
 	var search func() bool
 	search = func() bool {
 		if ctx.Err() != nil {
@@ -171,7 +176,7 @@ func FindSolutions(ctx context.Context, initial Board, pieces []piece.Piece, opt
 		}
 
 		// Pruning: bail early when remaining pieces cannot fill remaining cells.
-		if !feasible(values, targets, usedPieces, minTotals, maxTotals) {
+		if boardRemMin > pieceRemMax || boardRemMax < pieceRemMin {
 			return false
 		}
 
@@ -220,6 +225,24 @@ func FindSolutions(ctx context.Context, initial Board, pieces []piece.Piece, opt
 		}
 
 		for _, candidate := range options {
+			// Compute how much this candidate changes the remaining board need.
+			// Triangle slots contribute a range; regular cells contribute exactly.
+			var bDeltaMin, bDeltaMax int
+			for _, sc := range candidate.cells {
+				if isTriangleTarget(targets[sc.index]) {
+					mn, mx := triangleContributionRange()
+					bDeltaMin -= mn
+					bDeltaMax -= mx
+				} else {
+					bDeltaMin -= int(sc.contribution)
+					bDeltaMax -= int(sc.contribution)
+				}
+			}
+			boardRemMin += bDeltaMin
+			boardRemMax += bDeltaMax
+			pieceRemMin -= minTotals[candidate.pieceIndex]
+			pieceRemMax -= maxTotals[candidate.pieceIndex]
+
 			// Forward step: apply this candidate and snapshot the result.
 			applyPlacement(values, usedPieces, candidate)
 			snap := boardFromValues(values, targets, rows, columns,
@@ -246,6 +269,12 @@ func FindSolutions(ctx context.Context, initial Board, pieces []piece.Piece, opt
 				Board: boardFromValues(values, targets, rows, columns,
 					initial.displayRows, initial.displayIndent),
 			})
+
+			// Restore incremental totals.
+			boardRemMin -= bDeltaMin
+			boardRemMax -= bDeltaMax
+			pieceRemMin += minTotals[candidate.pieceIndex]
+			pieceRemMax += maxTotals[candidate.pieceIndex]
 		}
 		return false
 	}
