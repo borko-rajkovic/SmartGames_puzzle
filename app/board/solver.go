@@ -36,6 +36,8 @@ type Options struct {
 	Rand *rand.Rand
 }
 
+// Placement describes one piece placed on the board at a specific position
+// and orientation (variation).
 type Placement struct {
 	Piece          piece.Piece
 	VariationIndex int
@@ -43,17 +45,48 @@ type Placement struct {
 	Column         int
 }
 
-type Solution struct {
-	Board              Board
-	Placements         []Placement
-	IntermediateBoards []Board
+// StepKind classifies what happened at one step of the backtracking search.
+type StepKind int
+
+const (
+	// StepPlace records a candidate placement being tried.
+	StepPlace StepKind = iota
+	// StepBacktrack records a placement being undone because the branch failed.
+	StepBacktrack
+)
+
+// SearchStep is one snapshot captured during the backtracking search: the
+// board after an apply or undo, together with which piece was involved and
+// whether this was a forward attempt or a rollback.
+type SearchStep struct {
+	Kind      StepKind
+	Placement Placement
+	Board     Board
 }
 
+// Solution holds one complete solution together with its search trace.
+type Solution struct {
+	Board Board
+	// Placements lists the pieces in the order they were placed to reach
+	// this solution.
+	Placements []Placement
+	// IntermediateBoards holds the board state after each successful
+	// placement (one entry per element of Placements).
+	IntermediateBoards []Board
+	// SearchSteps records every place and backtrack operation the solver
+	// performed while finding this solution, suitable for full-trace replay.
+	SearchSteps []SearchStep
+}
+
+// placementCell links a flat board index to the contribution a piece cell adds.
 type placementCell struct {
 	index        int
 	contribution cell.CellType
 }
 
+// candidatePlacement is a fully resolved placement candidate: which piece,
+// which variation, where on the board, and the (index, contribution) pair
+// for each of the piece's occupied cells.
 type candidatePlacement struct {
 	placement  Placement
 	pieceIndex int
@@ -74,116 +107,47 @@ func FindSolution(initial Board, pieces []piece.Piece) (*Solution, error) {
 }
 
 // FindSolutions searches for solutions to the given board using the given
-// piece set, according to opts.Mode:
+// piece set, according to opts. The search uses two pruning strategies:
 //
-//   - ModeFirst stops at the first solution found (Options.Limit is ignored).
-//   - ModeRandom shuffles candidate order at each branch, so repeated calls
-//     tend to surface different valid solutions; it stops at the first
-//     solution found unless Options.Limit > 1.
-//   - ModeAll keeps searching for every solution, up to Options.Limit
-//     (0 = unlimited).
+//  1. Contribution-range pruning: before each recursive call, the solver
+//     checks whether the remaining unused pieces can still contribute
+//     enough (or not too much) to satisfy the remaining unfilled cells.
+//     If not, the branch is cut immediately.
 //
-// The search can be cancelled early via ctx; solutions collected before
-// cancellation are still returned.
+//  2. MRV (Minimum Remaining Values): at each level the solver picks the
+//     unfilled cell that has the fewest compatible candidates, which keeps
+//     the branching factor low and surfaces dead ends early.
+//
+// Every place and backtrack operation is recorded in Solution.SearchSteps
+// so callers can replay the full search trace.
 func FindSolutions(ctx context.Context, initial Board, pieces []piece.Piece, opts Options) ([]*Solution, error) {
 	rows, columns, err := boardDimensions(initial.cells)
 	if err != nil {
 		return nil, fmt.Errorf("invalid board: %w", err)
 	}
 
-	values := make([]cell.CellType, rows*columns)
-	targets := make([]cell.CellType, rows*columns)
-	boardMinimum, boardMaximum := 0, 0
-	for row := range initial.cells {
-		for column, value := range initial.cells[row] {
-			if value < cell.Empty || value > cell.TriangleRightSlot {
-				return nil, fmt.Errorf("invalid board cell value %d at row %d, column %d", value, row, column)
-			}
-			index := row*columns + column
-			switch value {
-			case cell.Blocked:
-				values[index] = cell.Blocked
-				targets[index] = cell.Blocked
-			case cell.TriangleUpSlot, cell.TriangleDownSlot, cell.TriangleLeftSlot, cell.TriangleRightSlot:
-				targets[index] = value
-			default:
-				values[index] = value
-				targets[index] = cell.Complete
-				boardMinimum += int(cell.Complete - value)
-				boardMaximum += int(cell.Complete - value)
-			}
-		}
-	}
-	for index, target := range targets {
-		if isTriangleTarget(target) && values[index] == cell.Empty {
-			minimum, maximum := triangleContributionRange()
-			boardMinimum += minimum
-			boardMaximum += maximum
-		}
+	// Parse the initial board into flat value/target slices.
+	// values[i] is the current fill level; targets[i] is the required level.
+	values, targets, boardMin, boardMax, err := buildBoardState(initial.cells, rows, columns)
+	if err != nil {
+		return nil, err
 	}
 
-	candidatesByCell := make([][]candidatePlacement, rows*columns)
-	minPieceTotals := make([]int, len(pieces))
-	maxPieceTotals := make([]int, len(pieces))
-	minimumPossibleTotal, maximumPossibleTotal := 0, 0
-	for pieceIndex, currentPiece := range pieces {
-		if len(currentPiece.Variations) == 0 {
-			return nil, fmt.Errorf("piece %q has no variations", currentPiece.Color)
-		}
-
-		minimumPieceTotal, maximumPieceTotal := 0, 0
-		for variationIndex, variation := range currentPiece.Variations {
-			shape := variation.Cells()
-			height, width, shapeCells, err := variationDimensions(shape)
-			if err != nil {
-				return nil, fmt.Errorf("piece %q variation %d: %w", currentPiece.Color, variationIndex, err)
-			}
-			variationTotal := 0
-			for _, shapeCell := range shapeCells {
-				variationTotal += int(shapeCell.contribution)
-			}
-			if variationIndex == 0 || variationTotal < minimumPieceTotal {
-				minimumPieceTotal = variationTotal
-			}
-			if variationIndex == 0 || variationTotal > maximumPieceTotal {
-				maximumPieceTotal = variationTotal
-			}
-
-			for top := 0; top+height <= rows; top++ {
-				for left := 0; left+width <= columns; left++ {
-					placement := candidatePlacement{
-						placement: Placement{
-							Piece:          currentPiece,
-							VariationIndex: variationIndex,
-							Row:            top,
-							Column:         left,
-						},
-						pieceIndex: pieceIndex,
-						cells:      make([]placementCell, len(shapeCells)),
-					}
-					for i, shapeCell := range shapeCells {
-						row := top + shapeCell.index/len(shape[0])
-						column := left + shapeCell.index%len(shape[0])
-						index := row*columns + column
-						placement.cells[i] = placementCell{index: index, contribution: shapeCell.contribution}
-						candidatesByCell[index] = append(candidatesByCell[index], placement)
-					}
-				}
-			}
-		}
-		minPieceTotals[pieceIndex] = minimumPieceTotal
-		maxPieceTotals[pieceIndex] = maximumPieceTotal
-		minimumPossibleTotal += minimumPieceTotal
-		maximumPossibleTotal += maximumPieceTotal
+	// Precompute every valid (piece × variation × position) candidate,
+	// indexed by which board cell they touch. Also derive per-piece
+	// contribution bounds used for feasibility pruning.
+	candidatesByCell, minTotals, maxTotals, minPossible, maxPossible, err :=
+		buildCandidates(pieces, rows, columns)
+	if err != nil {
+		return nil, err
 	}
 
-	if boardMinimum > maximumPossibleTotal || boardMaximum < minimumPossibleTotal {
+	// Fast global feasibility check: if the pieces cannot possibly satisfy
+	// the board's total contribution requirement, fail immediately.
+	if boardMin > maxPossible || boardMax < minPossible {
 		return nil, fmt.Errorf(
 			"board requires between %d and %d, but pieces can contribute between %d and %d",
-			boardMinimum,
-			boardMaximum,
-			minimumPossibleTotal,
-			maximumPossibleTotal,
+			boardMin, boardMax, minPossible, maxPossible,
 		)
 	}
 
@@ -192,84 +156,44 @@ func FindSolutions(ctx context.Context, initial Board, pieces []piece.Piece, opt
 		rng = rand.New(rand.NewSource(time.Now().UnixNano()))
 	}
 
+	// Mutable solver state — all shared across the recursive search closure.
 	usedPieces := make([]bool, len(pieces))
 	path := make([]Placement, 0, len(pieces))
 	intermediateBoards := make([]Board, 0, len(pieces))
+	searchSteps := make([]SearchStep, 0)
 	results := make([]*Solution, 0)
+
 	var search func() bool
 	search = func() bool {
-		if err := ctx.Err(); err != nil {
+		if ctx.Err() != nil {
+			// Context cancelled — stop and surface whatever was found.
 			return true
 		}
 
-		remainingBoardMinimum, remainingBoardMaximum := 0, 0
-		for index, target := range targets {
-			switch target {
-			case cell.Complete:
-				remaining := int(cell.Complete - values[index])
-				remainingBoardMinimum += remaining
-				remainingBoardMaximum += remaining
-			default:
-				if !isTriangleTarget(target) {
-					continue
-				}
-				if values[index] == cell.Empty {
-					minimum, maximum := triangleContributionRange()
-					remainingBoardMinimum += minimum
-					remainingBoardMaximum += maximum
-				}
-			}
-		}
-		remainingMinimum, remainingMaximum := 0, 0
-		for pieceIndex, used := range usedPieces {
-			if used {
-				continue
-			}
-			remainingMinimum += minPieceTotals[pieceIndex]
-			remainingMaximum += maxPieceTotals[pieceIndex]
-		}
-		if remainingBoardMinimum > remainingMaximum || remainingBoardMaximum < remainingMinimum {
+		// Pruning: bail early when remaining pieces cannot fill remaining cells.
+		if !feasible(values, targets, usedPieces, minTotals, maxTotals) {
 			return false
 		}
 
-		targetIndex, options := -1, []candidatePlacement(nil)
-		for index, value := range values {
-			if isFilled(value, targets[index]) {
-				continue
-			}
-
-			compatible := make([]candidatePlacement, 0)
-			for _, candidate := range candidatesByCell[index] {
-				if usedPieces[candidate.pieceIndex] || !canPlace(values, targets, candidate) {
-					continue
-				}
-				compatible = append(compatible, candidate)
-			}
-			if len(compatible) == 0 {
-				return false
-			}
-			if targetIndex == -1 || len(compatible) < len(options) {
-				targetIndex, options = index, compatible
-			}
-		}
+		// MRV: pick the unfilled cell with the fewest compatible candidates.
+		// Returns (-1, non-nil): all cells are filled — solution candidate.
+		// Returns (>=0, nil):   some cell has zero candidates — dead end.
+		// Returns (>=0, non-nil): normal case — proceed with those candidates.
+		targetIndex, options := findMostConstrained(values, targets, candidatesByCell, usedPieces)
 
 		if targetIndex == -1 {
+			// Every cell is filled. Check all pieces were actually used.
 			for _, used := range usedPieces {
 				if !used {
 					return false
 				}
 			}
 			results = append(results, &Solution{
-				Board: boardFromValues(
-					values,
-					targets,
-					rows,
-					columns,
-					initial.displayRows,
-					initial.displayIndent,
-				),
+				Board: boardFromValues(values, targets, rows, columns,
+					initial.displayRows, initial.displayIndent),
 				Placements:         append([]Placement(nil), path...),
 				IntermediateBoards: append([]Board(nil), intermediateBoards...),
+				SearchSteps:        append([]SearchStep(nil), searchSteps...),
 			})
 			if opts.Mode == ModeFirst {
 				return true
@@ -284,6 +208,11 @@ func FindSolutions(ctx context.Context, initial Board, pieces []piece.Piece, opt
 			return false
 		}
 
+		if options == nil {
+			// Dead end: the most-constrained cell has no valid candidates.
+			return false
+		}
+
 		if opts.Mode == ModeRandom {
 			rng.Shuffle(len(options), func(i, j int) {
 				options[i], options[j] = options[j], options[i]
@@ -291,30 +220,32 @@ func FindSolutions(ctx context.Context, initial Board, pieces []piece.Piece, opt
 		}
 
 		for _, candidate := range options {
-			usedPieces[candidate.pieceIndex] = true
-			for _, shapeCell := range candidate.cells {
-				values[shapeCell.index] += shapeCell.contribution
-			}
+			// Forward step: apply this candidate and snapshot the result.
+			applyPlacement(values, usedPieces, candidate)
+			snap := boardFromValues(values, targets, rows, columns,
+				initial.displayRows, initial.displayIndent)
 			path = append(path, candidate.placement)
-			intermediateBoards = append(intermediateBoards, boardFromValues(
-				values,
-				targets,
-				rows,
-				columns,
-				initial.displayRows,
-				initial.displayIndent,
-			))
+			intermediateBoards = append(intermediateBoards, snap)
+			searchSteps = append(searchSteps, SearchStep{
+				Kind:      StepPlace,
+				Placement: candidate.placement,
+				Board:     snap,
+			})
 
 			if search() {
 				return true
 			}
 
+			// Backtrack step: undo the candidate and snapshot the rolled-back board.
 			intermediateBoards = intermediateBoards[:len(intermediateBoards)-1]
 			path = path[:len(path)-1]
-			for _, shapeCell := range candidate.cells {
-				values[shapeCell.index] -= shapeCell.contribution
-			}
-			usedPieces[candidate.pieceIndex] = false
+			undoPlacement(values, usedPieces, candidate)
+			searchSteps = append(searchSteps, SearchStep{
+				Kind:      StepBacktrack,
+				Placement: candidate.placement,
+				Board: boardFromValues(values, targets, rows, columns,
+					initial.displayRows, initial.displayIndent),
+			})
 		}
 		return false
 	}
@@ -322,124 +253,10 @@ func FindSolutions(ctx context.Context, initial Board, pieces []piece.Piece, opt
 	search()
 
 	if len(results) == 0 {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
 		return nil, nil
 	}
-
 	return results, nil
-}
-
-func isFilled(value, target cell.CellType) bool {
-	if isTriangleTarget(target) {
-		return triangleFits(target, value)
-	}
-	return value == cell.Complete || target == cell.Blocked
-}
-
-func isTriangleTarget(target cell.CellType) bool {
-	return target >= cell.TriangleUpSlot && target <= cell.TriangleRightSlot
-}
-
-func triangleContributionRange() (int, int) {
-	return int(cell.DownRight), int(cell.TopLeft)
-}
-
-func triangleFits(target, contribution cell.CellType) bool {
-	return isTriangleTarget(target) && contribution >= cell.DownRight && contribution <= cell.TopLeft
-}
-
-func boardFromValues(
-	values, targets []cell.CellType,
-	rows, columns int,
-	displayRows [][]int,
-	displayIndent []int,
-) Board {
-	result := Board{
-		cells:         make([][]cell.CellType, rows),
-		targets:       make([][]cell.CellType, rows),
-		displayRows:   make([][]int, len(displayRows)),
-		displayIndent: append([]int(nil), displayIndent...),
-	}
-	for row := range result.cells {
-		start, end := row*columns, (row+1)*columns
-		result.cells[row] = append([]cell.CellType(nil), values[start:end]...)
-		result.targets[row] = append([]cell.CellType(nil), targets[start:end]...)
-	}
-	for row := range displayRows {
-		result.displayRows[row] = append([]int(nil), displayRows[row]...)
-	}
-	return result
-}
-
-func boardDimensions(cells [][]cell.CellType) (int, int, error) {
-	if len(cells) == 0 || len(cells[0]) == 0 {
-		return 0, 0, fmt.Errorf("must have at least one row and column")
-	}
-	columns := len(cells[0])
-	for row := range cells {
-		if len(cells[row]) != columns {
-			return 0, 0, fmt.Errorf("row %d has %d columns; expected %d", row, len(cells[row]), columns)
-		}
-	}
-	return len(cells), columns, nil
-}
-
-func variationDimensions(cells [][]cell.CellType) (int, int, []placementCell, error) {
-	if len(cells) == 0 || len(cells[0]) == 0 {
-		return 0, 0, nil, fmt.Errorf("must have at least one row and column")
-	}
-	columns := len(cells[0])
-	maxRow, maxColumn := -1, -1
-	shapeCells := make([]placementCell, 0)
-	for row := range cells {
-		if len(cells[row]) != columns {
-			return 0, 0, nil, fmt.Errorf("row %d has %d columns; expected %d", row, len(cells[row]), columns)
-		}
-		for column, value := range cells[row] {
-			if value < cell.Empty || value > cell.Complete {
-				return 0, 0, nil, fmt.Errorf("invalid cell value %d at row %d, column %d", value, row, column)
-			}
-			if value == cell.Empty {
-				continue
-			}
-			shapeCells = append(shapeCells, placementCell{
-				index:        row*columns + column,
-				contribution: value,
-			})
-			if row > maxRow {
-				maxRow = row
-			}
-			if column > maxColumn {
-				maxColumn = column
-			}
-		}
-	}
-	if len(shapeCells) == 0 {
-		return 0, 0, nil, fmt.Errorf("has no occupied cells")
-	}
-	return maxRow + 1, maxColumn + 1, shapeCells, nil
-}
-
-func canPlace(values, targets []cell.CellType, candidate candidatePlacement) bool {
-	for _, shapeCell := range candidate.cells {
-		index := shapeCell.index
-		if targets[index] == cell.Blocked {
-			return false
-		}
-		if isTriangleTarget(targets[index]) {
-			if values[index] != cell.Empty || shapeCell.contribution == cell.Complete {
-				return false
-			}
-			if !triangleFits(targets[index], shapeCell.contribution) {
-				return false
-			}
-			continue
-		}
-		if values[index]+shapeCell.contribution > targets[index] {
-			return false
-		}
-	}
-	return true
 }

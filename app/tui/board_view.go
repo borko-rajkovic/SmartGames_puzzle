@@ -53,9 +53,9 @@ func glyphFor(value cell.CellType) string {
 	case cell.Blocked:
 		return "×"
 	case cell.TriangleUpSlot:
-		return "▽"
-	case cell.TriangleDownSlot:
 		return "△"
+	case cell.TriangleDownSlot:
+		return "▽"
 	case cell.TriangleLeftSlot:
 		return "▷"
 	case cell.TriangleRightSlot:

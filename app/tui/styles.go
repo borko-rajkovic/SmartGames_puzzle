@@ -7,13 +7,13 @@ import (
 )
 
 const (
-	defaultSpeed = 500 * time.Millisecond
-	minSpeed     = 80 * time.Millisecond
+	defaultSpeed = 120 * time.Millisecond
+	minSpeed     = 30 * time.Millisecond
 	maxSpeed     = 2000 * time.Millisecond
 
 	// allSolutionsLimit caps how many solutions ModeAll will collect
 	// before stopping on its own; the user can also cancel early with esc.
-	allSolutionsLimit = 30
+	allSolutionsLimit = 130
 )
 
 var (
@@ -41,4 +41,15 @@ var (
 
 	progressStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("245"))
+
+	placeStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("83"))
+
+	backtrackStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("196"))
+
+	stepCountStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("220"))
 )

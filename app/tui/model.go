@@ -1,6 +1,6 @@
 // Package tui implements an interactive terminal UI for choosing a board,
-// solving it with a chosen strategy, and watching the solution's pieces
-// being placed one by one.
+// solving it with a chosen strategy, and watching the full search process
+// — including every backtrack — animated step by step.
 package tui
 
 import (
@@ -59,6 +59,8 @@ type Model struct {
 	solutions        []*board.Solution
 	selectedSolution *board.Solution
 
+	// stepIndex is the current position in the search-step trace.
+	// 0 = initial board; 1..len(SearchSteps) = after that many search operations.
 	stepIndex int
 	playing   bool
 	speed     time.Duration
@@ -66,8 +68,7 @@ type Model struct {
 	quitting bool
 }
 
-// NewModel builds the initial Model, ready to show the board-selection
-// screen.
+// NewModel builds the initial Model, ready to show the board-selection screen.
 func NewModel() Model {
 	boardItems := []list.Item{
 		menuItem{title: "Flat board", desc: "A plain 5x6 rectangular board"},
@@ -189,7 +190,6 @@ func (m Model) updateModeSelect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
-
 		var mode board.Mode
 		limit := 0
 		switch item.title {
@@ -200,7 +200,6 @@ func (m Model) updateModeSelect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "All solutions":
 			mode, limit = board.ModeAll, allSolutionsLimit
 		}
-
 		ctx, cancel := context.WithCancel(context.Background())
 		m.solveCancel = cancel
 		m.solveMode = item.title
@@ -251,7 +250,7 @@ func (m Model) updateSolutionList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateAnimate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	total := len(m.selectedSolution.Placements)
+	total := len(m.selectedSolution.SearchSteps)
 	switch msg.String() {
 	case "q":
 		m.quitting = true
@@ -319,7 +318,8 @@ func (m Model) handleSolveResult(msg solveResultMsg) (tea.Model, tea.Cmd) {
 	for i, solution := range msg.solutions {
 		items[i] = menuItem{
 			title: fmt.Sprintf("Solution %d", i+1),
-			desc:  fmt.Sprintf("%d placements", len(solution.Placements)),
+			desc: fmt.Sprintf("%d placements, %d search steps",
+				len(solution.Placements), len(solution.SearchSteps)),
 		}
 	}
 	m.solutionList.SetItems(items)
@@ -338,7 +338,7 @@ func (m Model) handleAnimTick() (tea.Model, tea.Cmd) {
 	if !m.playing || m.selectedSolution == nil {
 		return m, nil
 	}
-	total := len(m.selectedSolution.Placements)
+	total := len(m.selectedSolution.SearchSteps)
 	if m.stepIndex >= total {
 		m.playing = false
 		return m, nil
@@ -351,18 +351,49 @@ func (m Model) handleAnimTick() (tea.Model, tea.Cmd) {
 	return m, animTickCmd(m.speed)
 }
 
-// boardForStep returns the board state to render at the given animation
-// step: 0 is the untouched initial board, and step k (1 <= k <=
-// len(Placements)) is the board immediately after placement k.
-func (m Model) boardForStep(step int) board.Board {
-	if m.selectedSolution == nil || step <= 0 {
+// currentBoard returns the board state to display at the current animation step.
+// Step 0 shows the initial (empty) board; step k shows the state after the
+// k-th search operation (place or backtrack).
+func (m Model) currentBoard() board.Board {
+	if m.selectedSolution == nil || m.stepIndex == 0 {
 		return m.initialBoard
 	}
-	boards := m.selectedSolution.IntermediateBoards
-	if step > len(boards) {
-		return m.selectedSolution.Board
+	steps := m.selectedSolution.SearchSteps
+	idx := m.stepIndex - 1
+	if idx >= len(steps) {
+		idx = len(steps) - 1
 	}
-	return boards[step-1]
+	return steps[idx].Board
+}
+
+// placementsUpTo returns the placements that are active at the current step,
+// so the board renderer can colour cells by piece.
+func (m Model) placementsUpTo() []board.Placement {
+	if m.selectedSolution == nil || m.stepIndex == 0 {
+		return nil
+	}
+	steps := m.selectedSolution.SearchSteps
+	idx := m.stepIndex - 1
+	if idx >= len(steps) {
+		idx = len(steps) - 1
+	}
+	// Replay forward from step 0 to collect the active placement set.
+	active := make([]board.Placement, 0, len(m.selectedSolution.Placements))
+	for i := 0; i <= idx; i++ {
+		s := steps[i]
+		if s.Kind == board.StepPlace {
+			active = append(active, s.Placement)
+		} else {
+			// Remove the last placement of this piece.
+			for j := len(active) - 1; j >= 0; j-- {
+				if active[j].Piece.Color == s.Placement.Piece.Color {
+					active = append(active[:j], active[j+1:]...)
+					break
+				}
+			}
+		}
+	}
+	return active
 }
 
 // View implements tea.Model.
@@ -403,28 +434,45 @@ func (m Model) renderSolving() string {
 
 func (m Model) renderAnimate() string {
 	solution := m.selectedSolution
-	total := len(solution.Placements)
+	steps := solution.SearchSteps
+	total := len(steps)
 
 	header := titleStyle.Render(fmt.Sprintf("%s — %s", m.boardName, m.solveMode))
 
-	status := "Placing pieces..."
-	if m.stepIndex >= total {
-		status = "Solved!"
-	} else if !m.playing {
-		status = "Paused"
+	// Step counter and current action label.
+	var stepLabel, actionLine string
+	if m.stepIndex == 0 {
+		stepLabel = "Ready"
+		actionLine = helpStyle.Render("Press space to start the search replay")
+	} else {
+		s := steps[m.stepIndex-1]
+		if s.Kind == board.StepPlace {
+			stepLabel = placeStyle.Render("▶ Place")
+			actionLine = fmt.Sprintf("Placing %s at row %d, col %d (variation %d)",
+				s.Placement.Piece.Color, s.Placement.Row, s.Placement.Column,
+				s.Placement.VariationIndex+1)
+		} else {
+			stepLabel = backtrackStyle.Render("◀ Backtrack")
+			actionLine = fmt.Sprintf("Removing %s — branch failed", s.Placement.Piece.Color)
+		}
+		if m.stepIndex >= total {
+			stepLabel = placeStyle.Render("✓ Solved")
+			actionLine = fmt.Sprintf("Solution found in %s search steps", stepCountStyle.Render(fmt.Sprintf("%d", total)))
+		}
 	}
-	progress := progressStyle.Render(fmt.Sprintf("Step %d / %d — %s", m.stepIndex, total, status))
 
-	boardStr := RenderBoard(m.boardForStep(m.stepIndex), solution.Placements, m.stepIndex)
-
-	placementLine := " "
-	if m.stepIndex > 0 && m.stepIndex <= total {
-		p := solution.Placements[m.stepIndex-1]
-		placementLine = fmt.Sprintf(
-			"Last placed: %s at row %d, column %d (variation %d)",
-			p.Piece.Color, p.Row, p.Column, p.VariationIndex+1,
-		)
+	playState := "Paused"
+	if m.playing {
+		playState = "Playing"
 	}
+
+	progress := progressStyle.Render(fmt.Sprintf(
+		"Search step %d / %d   %s   %s",
+		m.stepIndex, total, stepLabel, playState,
+	))
+
+	placements := m.placementsUpTo()
+	boardStr := RenderBoard(m.currentBoard(), placements, len(placements))
 
 	help := helpStyle.Render(
 		"space: play/pause   ←/→: step   r: restart   +/-: speed   esc: back   q: quit",
@@ -436,8 +484,9 @@ func (m Model) renderAnimate() string {
 		"",
 		boardStr,
 		"",
+		actionLine,
+		"",
 		Legend(piece.Pieces),
-		placementLine,
 		"",
 		help,
 	}
