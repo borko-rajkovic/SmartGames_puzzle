@@ -111,9 +111,10 @@ type searchState struct {
 	targets []cell.CellType
 	values  []cell.CellType
 
-	usedPieces []bool
-	minTotals  []int
-	maxTotals  []int
+	usedPieces  []bool
+	minTotals   []int
+	maxTotals   []int
+	reachableAt []uint8
 
 	path               []Placement
 	intermediateBoards []Board
@@ -286,6 +287,7 @@ func FindSolutions(ctx context.Context, initial Board, pieces []piece.Piece, opt
 		usedPieces:         make([]bool, len(pieces)),
 		minTotals:          minTotals,
 		maxTotals:          maxTotals,
+		reachableAt:        computeReachableAt(candidatesByCell),
 		path:               make([]Placement, 0, len(pieces)),
 		intermediateBoards: make([]Board, 0, len(pieces)),
 		searchSteps:        make([]SearchStep, 0),
@@ -309,7 +311,7 @@ func FindSolutions(ctx context.Context, initial Board, pieces []piece.Piece, opt
 
 // runDFS executes the iterative depth-first search, populating s.results.
 func (s *searchState) runDFS(ctx context.Context, opts Options, rng *rand.Rand, candidatesByCell [][]candidatePlacement) {
-	rootTargetIndex, rootOptions := findMostConstrained(s.values, s.targets, candidatesByCell, s.usedPieces)
+	rootTargetIndex, rootOptions := findMostConstrained(s.values, s.targets, candidatesByCell, s.usedPieces, s.reachableAt)
 
 	if rootTargetIndex == -1 {
 		// Board already fully filled before any piece is placed.
@@ -360,7 +362,7 @@ func (s *searchState) runDFS(ctx context.Context, opts Options, rng *rand.Rand, 
 			continue
 		}
 
-		targetIndex, newOptions := findMostConstrained(s.values, s.targets, candidatesByCell, s.usedPieces)
+		targetIndex, newOptions := findMostConstrained(s.values, s.targets, candidatesByCell, s.usedPieces, s.reachableAt)
 
 		if targetIndex == -1 {
 			// Every cell is filled — check that all pieces were used.

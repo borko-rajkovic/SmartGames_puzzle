@@ -182,6 +182,7 @@ func findMostConstrained(
 	values, targets []cell.CellType,
 	candidatesByCell [][]candidatePlacement,
 	usedPieces []bool,
+	reachableAt []uint8,
 ) (int, []candidatePlacement) {
 	bestIndex, bestCount := -1, 0
 
@@ -193,7 +194,7 @@ func findMostConstrained(
 		}
 		count := 0
 		for _, candidate := range candidatesByCell[index] {
-			if !usedPieces[candidate.pieceIndex] && canPlace(values, targets, candidate) {
+			if !usedPieces[candidate.pieceIndex] && canPlace(values, targets, candidate, reachableAt) {
 				count++
 			}
 		}
@@ -210,7 +211,7 @@ func findMostConstrained(
 	// Pass 2: collect candidates for the winning cell only.
 	best := make([]candidatePlacement, 0, bestCount)
 	for _, candidate := range candidatesByCell[bestIndex] {
-		if !usedPieces[candidate.pieceIndex] && canPlace(values, targets, candidate) {
+		if !usedPieces[candidate.pieceIndex] && canPlace(values, targets, candidate, reachableAt) {
 			best = append(best, candidate)
 		}
 	}
@@ -271,10 +272,34 @@ func triangleFits(target, contribution cell.CellType) bool {
 	return false
 }
 
+// computeReachableAt returns a bitmask slice (one uint8 per cell) where bit t
+// is set when any candidate can contribute triangle type t to that cell.
+// Only triangle contributions (DownRight=1 through TopLeft=4) are tracked.
+func computeReachableAt(candidatesByCell [][]candidatePlacement) []uint8 {
+	reachable := make([]uint8, len(candidatesByCell))
+	for idx, candidates := range candidatesByCell {
+		for _, cp := range candidates {
+			for _, sc := range cp.cells {
+				if sc.index == idx && sc.contribution >= cell.DownRight && sc.contribution <= cell.TopLeft {
+					reachable[idx] |= 1 << uint(sc.contribution)
+				}
+			}
+		}
+	}
+	return reachable
+}
+
 // canPlace checks whether a candidate placement is compatible with the
 // current board state: no blocked cells, no overfill of regular cells,
-// and correct triangle orientation for triangle slots.
-func canPlace(values, targets []cell.CellType, candidate candidatePlacement) bool {
+// correct triangle orientation for triangle slots, and two pruning rules
+// for regular Complete-target cells:
+//
+//  1. Static reachability: placing a triangle on an empty cell is rejected
+//     when no piece can ever contribute the complement to that cell.
+//
+//  2. Physical complement pairing: once a cell carries a partial triangle
+//     value, only the exact complement (the other half) is accepted.
+func canPlace(values, targets []cell.CellType, candidate candidatePlacement, reachableAt []uint8) bool {
 	for _, sc := range candidate.cells {
 		index := sc.index
 		if targets[index] == cell.Blocked {
@@ -294,6 +319,20 @@ func canPlace(values, targets []cell.CellType, candidate candidatePlacement) boo
 		// Regular cell: adding this contribution must not exceed the target.
 		if values[index]+sc.contribution > targets[index] {
 			return false
+		}
+		if targets[index] == cell.Complete {
+			if values[index] == cell.Empty && sc.contribution >= cell.DownRight && sc.contribution <= cell.TopLeft {
+				// Static reachability: reject if the complement can never be placed here.
+				comp := cell.Complete - sc.contribution
+				if reachableAt[index]&(1<<uint(comp)) == 0 {
+					return false
+				}
+			} else if values[index] > cell.Empty {
+				// Physical complement pairing: partial cell only accepts its exact complement.
+				if values[index]+sc.contribution != cell.Complete {
+					return false
+				}
+			}
 		}
 	}
 	return true
